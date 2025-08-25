@@ -96,46 +96,68 @@ CREATE TABLE IF NOT EXISTS todos (
 app.post(
   '/signup',
   body('email').isEmail(),
+  body('phone').isMobilePhone().withMessage('Invalid phone number'),
   body('password').isLength({ min: 6 }),
+  body('confirmPassword').custom((value, { req }) => {
+    if (value !== req.body.password) {
+      throw new Error('Passwords do not match');
+    }
+    return true;
+  }),
   async (req, res) => {
     console.log('Signup body:', req.body);
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { email, password, name } = req.body;
+    const { email, phone, password, name } = req.body;
 
     try {
-      const existingUsers = await queryPromise('SELECT * FROM users WHERE email = ?', [email]);
-      if (existingUsers.length > 0)
-        return res.status(409).json({ error: 'Email already registered' });
+      // Check if email or phone already exists
+      const existingUsers = await queryPromise(
+        'SELECT * FROM users WHERE email = ? OR phone = ?',
+        [email, phone]
+      );
+      if (existingUsers.length > 0) {
+        return res.status(409).json({ error: 'Email or phone already registered' });
+      }
 
       const hashedPassword = await bcrypt.hash(password, 10);
-      await queryPromise('INSERT INTO users (name, email, password) VALUES (?, ?, ?)', [
-        name,
-        email,
-        hashedPassword,
-      ]);
+      const result = await queryPromise(
+        'INSERT INTO users (name, email, phone, password) VALUES (?, ?, ?, ?)',
+        [name, email, phone, hashedPassword]
+      );
 
-      res.status(201).json({ message: 'User registered' });
+      // Fetch the newly inserted user (excluding password for security)
+      const [newUser] = await queryPromise(
+        'SELECT id, name, email, phone, created_at FROM users WHERE id = ?',
+        [result.insertId]
+      );
+
+      res.status(201).json({ user: newUser });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
   }
 );
 
-// Signin
+// Signin (by email OR phone)
 app.post(
   '/signin',
-  body('email').isEmail(),
+  body('identifier').notEmpty().withMessage('Email or phone is required'),
   body('password').exists(),
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { email, password } = req.body;
+    const { identifier, password } = req.body;
 
     try {
-      const users = await queryPromise('SELECT * FROM users WHERE email = ?', [email]);
+      // Try finding by email OR phone
+      const users = await queryPromise(
+        'SELECT * FROM users WHERE email = ? OR phone = ?',
+        [identifier, identifier]
+      );
+
       if (users.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
 
       const user = users[0];
@@ -143,9 +165,14 @@ app.post(
       if (!passwordMatch) return res.status(401).json({ error: 'Invalid credentials' });
 
       const token = generateToken(user);
-      await queryPromise('INSERT INTO user_tokens (user_id, token) VALUES (?, ?)', [user.id, token]);
+      await queryPromise('INSERT INTO user_tokens (user_id, token) VALUES (?, ?)', [
+        user.id,
+        token,
+      ]);
 
-      res.json({ token });
+      // Return user without password + token
+      const { password: _, ...userWithoutPassword } = user;
+      res.json({ user: userWithoutPassword, token });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
