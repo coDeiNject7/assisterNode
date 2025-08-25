@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const bodyParser = require('body-parser');
 
-const connection = require('./db');
+const pool = require('./db');
 const { generateToken } = require('./auth');
 const authMiddleware = require('./middleware/authMiddleware');
 
@@ -30,9 +30,7 @@ app.post('/test-json', (req, res) => {
 
 // Utility function for queries
 const queryPromise = (sql, params = []) =>
-  new Promise((resolve, reject) => {
-    connection.query(sql, params, (err, results) => (err ? reject(err) : resolve(results)));
-  });
+  pool.query(sql, params).then(([rows]) => rows);
 
 // Table creation SQL (same as before)
 const createUsersTable = `
