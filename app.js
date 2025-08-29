@@ -193,9 +193,12 @@ app.get('/todos', authMiddleware, async (req, res) => {
   const whereClause = filters.length ? 'WHERE ' + filters.join(' AND ') : '';
 
   try {
+    console.log(`[GET /todos] Querying todos with filters: ${whereClause}`);
     const todos = await queryPromise(`SELECT * FROM todos ${whereClause}`);
+    console.log(`[GET /todos] Retrieved ${todos.length} todos`);
     res.json(todos);
   } catch (err) {
+    console.error('[GET /todos] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -205,13 +208,19 @@ app.get('/todos/:id', authMiddleware, async (req, res) => {
   const todoId = req.params.id;
 
   try {
+    console.log(`[GET /todos/${todoId}] Fetching todo for user ${userId}`);
     const todos = await queryPromise('SELECT * FROM todos WHERE id = ? AND user_id = ?', [
       todoId,
       userId,
     ]);
-    if (todos.length === 0) return res.status(404).json({ error: 'Todo not found' });
+    if (todos.length === 0) {
+      console.log(`[GET /todos/${todoId}] Todo not found`);
+      return res.status(404).json({ error: 'Todo not found' });
+    }
+    console.log(`[GET /todos/${todoId}] Todo found`);
     res.json(todos[0]);
   } catch (err) {
+    console.error(`[GET /todos/${todoId}] Error:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -219,17 +228,23 @@ app.get('/todos/:id', authMiddleware, async (req, res) => {
 app.post('/todos', authMiddleware, body('title').notEmpty(), async (req, res) => {
   const userId = req.user.id;
   const errors = validationResult(req);
-  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+  if (!errors.isEmpty()) {
+    console.log('[POST /todos] Validation errors:', errors.array());
+    return res.status(400).json({ errors: errors.array() });
+  }
 
   const { title, description, status, priority, category_id, due_date } = req.body;
 
   try {
+    console.log('[POST /todos] Creating todo for user:', userId);
     const result = await queryPromise(
       'INSERT INTO todos (user_id, title, description, status, priority, category_id, due_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [userId, title, description || null, status || 'pending', priority || 'medium', category_id || null, due_date || null]
     );
+    console.log('[POST /todos] Todo created with id:', result.insertId);
     res.status(201).json({ id: result.insertId, message: 'Todo created' });
   } catch (err) {
+    console.error('[POST /todos] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -240,14 +255,20 @@ app.put('/todos/:id', authMiddleware, async (req, res) => {
   const { title, description, status, priority, category_id, due_date } = req.body;
 
   try {
+    console.log(`[PUT /todos/${todoId}] Updating todo for user ${userId}`);
     const results = await queryPromise(
       `UPDATE todos SET title=?, description=?, status=?, priority=?, category_id=?, due_date=? WHERE id=? AND user_id=?`,
       [title, description, status, priority, category_id, due_date, todoId, userId]
     );
 
-    if (results.affectedRows === 0) return res.status(404).json({ error: 'Todo not found' });
+    if (results.affectedRows === 0) {
+      console.log(`[PUT /todos/${todoId}] Todo not found`);
+      return res.status(404).json({ error: 'Todo not found' });
+    }
+    console.log(`[PUT /todos/${todoId}] Todo updated`);
     res.json({ message: 'Todo updated' });
   } catch (err) {
+    console.error(`[PUT /todos/${todoId}] Error:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -257,14 +278,20 @@ app.delete('/todos/:id', authMiddleware, async (req, res) => {
   const todoId = req.params.id;
 
   try {
+    console.log(`[DELETE /todos/${todoId}] Deleting todo for user ${userId}`);
     const results = await queryPromise('DELETE FROM todos WHERE id = ? AND user_id = ?', [
       todoId,
       userId,
     ]);
 
-    if (results.affectedRows === 0) return res.status(404).json({ error: 'Todo not found' });
+    if (results.affectedRows === 0) {
+      console.log(`[DELETE /todos/${todoId}] Todo not found`);
+      return res.status(404).json({ error: 'Todo not found' });
+    }
+    console.log(`[DELETE /todos/${todoId}] Todo deleted`);
     res.json({ message: 'Todo deleted' });
   } catch (err) {
+    console.error(`[DELETE /todos/${todoId}] Error:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -274,15 +301,21 @@ app.post('/todos/:id/complete', authMiddleware, async (req, res) => {
   const todoId = req.params.id;
 
   try {
+    console.log(`[POST /todos/${todoId}/complete] Marking todo complete for user ${userId}`);
     const results = await queryPromise('UPDATE todos SET status = ? WHERE id = ? AND user_id = ?', [
       'completed',
       todoId,
       userId,
     ]);
 
-    if (results.affectedRows === 0) return res.status(404).json({ error: 'Todo not found' });
+    if (results.affectedRows === 0) {
+      console.log(`[POST /todos/${todoId}/complete] Todo not found`);
+      return res.status(404).json({ error: 'Todo not found' });
+    }
+    console.log(`[POST /todos/${todoId}/complete] Todo marked as complete`);
     res.json({ message: 'Todo marked as complete' });
   } catch (err) {
+    console.error(`[POST /todos/${todoId}/complete] Error:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -360,8 +393,14 @@ app.post('/logout', authMiddleware, async (req, res) => {
   }
 });
 
+// ✅ Add this:
+app.get("/", (req, res) => {
+  res.send("🚀 Assister API is running!");
+});
+
 // Start server
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
+

@@ -11,7 +11,8 @@ const pool = mysql.createPool({
   },
   waitForConnections: true,
   connectionLimit: 10,   // number of concurrent connections
-  queueLimit: 0          // unlimited queued queries
+  queueLimit: 0,         // unlimited queued queries
+  connectTimeout: 40000  // 40 seconds connect timeout
 });
 
 // Export promise-based pool (so you can use async/await)
