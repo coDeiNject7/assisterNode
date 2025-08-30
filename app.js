@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   email VARCHAR(255) NOT NULL UNIQUE,
+  phone VARCHAR(20) UNIQUE,
   password VARCHAR(255) NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`;
@@ -77,6 +78,19 @@ CREATE TABLE IF NOT EXISTS todos (
   FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
 );`;
 
+const createSongsTable = `
+CREATE TABLE IF NOT EXISTS songs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  title VARCHAR(255),
+  artist VARCHAR(255),
+  file_url TEXT,
+  album_art_url TEXT,
+  audio_lang VARCHAR(10),
+  lyrics JSON,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+`;
+
 // Create tables
 (async () => {
   try {
@@ -84,6 +98,7 @@ CREATE TABLE IF NOT EXISTS todos (
     await queryPromise(createCategoriesTable);
     await queryPromise(createTodosTable);
     await queryPromise(createUserTokensTable);
+    await queryPromise(createSongsTable);
     console.log('All tables ready');
   } catch (err) {
     console.error('Error creating tables:', err);
