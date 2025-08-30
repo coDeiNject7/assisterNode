@@ -105,6 +105,44 @@ CREATE TABLE IF NOT EXISTS songs (
   }
 })();
 
+// Public route: Get all songs metadata
+app.get('/public/songs', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM songs ORDER BY created_at DESC');
+    res.json(rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Public route: Search songs by a word in the title
+app.get('/public/songs/search', async (req, res) => {
+  const { q } = req.query;
+  if (!q) return res.status(400).json({ error: 'Query parameter "q" is required' });
+
+  try {
+    console.log('Search term:', q);
+    const likeQuery = `%${q}%`;
+    const rows = await queryPromise('SELECT * FROM songs WHERE title LIKE ?', [likeQuery]);
+    console.log('DB results:', rows);
+    res.json(rows); // Return results array, empty if no matches
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Public route: Get single song metadata by ID
+app.get('/public/songs/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [rows] = await pool.query('SELECT * FROM songs WHERE id = ?', [id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Song not found' });
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ---------- Authentication Routes ----------
 
 // Signup
