@@ -15,5 +15,13 @@ const pool = mysql.createPool({
   connectTimeout: 40000  // 40 seconds connect timeout
 });
 
+pool.on('connection', (connection) => {
+  connection.query("SET time_zone = '+05:30'", (err) => {
+    if (err) {
+      console.error('Error setting timezone for connection:', err);
+    }
+  });
+});
+
 // Export promise-based pool (so you can use async/await)
 module.exports = pool.promise();

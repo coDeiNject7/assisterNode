@@ -5,6 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const bodyParser = require('body-parser');
+const moment = require('moment-timezone');
 
 const pool = require('./db');
 const { generateToken } = require('./auth');
@@ -71,7 +72,7 @@ CREATE TABLE IF NOT EXISTS todos (
   status ENUM('pending','completed') DEFAULT 'pending',
   priority ENUM('low','medium','high') DEFAULT 'medium',
   category_id INT,
-  due_date DATE,
+  due_date DATETIME,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -248,14 +249,21 @@ app.get('/todos', authMiddleware, async (req, res) => {
   try {
     console.log(`[GET /todos] Querying todos with filters: ${whereClause}`);
     const todos = await queryPromise(`SELECT * FROM todos ${whereClause}`);
+    const todosWithISTDates = todos.map(todo => {
+      if (todo.due_date) {
+        todo.due_date = moment.utc(todo.due_date).tz('Asia/Kolkata').format('YYYY-MM-DD HH:mm:ss');
+      }
+      return todo;
+    });
     console.log(`[GET /todos] Retrieved ${todos.length} todos`);
-    res.json(todos);
+    res.json(todosWithISTDates);
   } catch (err) {
     console.error('[GET /todos] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
+// GET /todos/:id - convert single due_date to IST string
 app.get('/todos/:id', authMiddleware, async (req, res) => {
   const userId = req.user.id;
   const todoId = req.params.id;
@@ -270,14 +278,19 @@ app.get('/todos/:id', authMiddleware, async (req, res) => {
       console.log(`[GET /todos/${todoId}] Todo not found`);
       return res.status(404).json({ error: 'Todo not found' });
     }
+    const todo = todos[0];
+    if (todo.due_date) {
+      todo.due_date = moment.utc(todo.due_date).tz('Asia/Kolkata').format('YYYY-MM-DD HH:mm:ss');
+    }
     console.log(`[GET /todos/${todoId}] Todo found`);
-    res.json(todos[0]);
+    res.json(todo);
   } catch (err) {
     console.error(`[GET /todos/${todoId}] Error:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
+// POST /todos - convert incoming IST due_date to DB datetime
 app.post('/todos', authMiddleware, body('title').notEmpty(), async (req, res) => {
   const userId = req.user.id;
   const errors = validationResult(req);
@@ -288,11 +301,17 @@ app.post('/todos', authMiddleware, body('title').notEmpty(), async (req, res) =>
 
   const { title, description, status, priority, category_id, due_date } = req.body;
 
+  // Convert due_date from IST to DB datetime format
+  let dueDateIST = null;
+  if (due_date) {
+    dueDateIST = moment.tz(due_date, 'Asia/Kolkata').format('YYYY-MM-DD HH:mm:ss');
+  }
+
   try {
     console.log('[POST /todos] Creating todo for user:', userId);
     const result = await queryPromise(
       'INSERT INTO todos (user_id, title, description, status, priority, category_id, due_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [userId, title, description || null, status || 'pending', priority || 'medium', category_id || null, due_date || null]
+      [userId, title, description || null, status || 'pending', priority || 'medium', category_id || null, dueDateIST]
     );
     console.log('[POST /todos] Todo created with id:', result.insertId);
     res.status(201).json({ id: result.insertId, message: 'Todo created' });
@@ -302,16 +321,22 @@ app.post('/todos', authMiddleware, body('title').notEmpty(), async (req, res) =>
   }
 });
 
+// PUT /todos/:id - convert incoming IST due_date to DB datetime format
 app.put('/todos/:id', authMiddleware, async (req, res) => {
   const userId = req.user.id;
   const todoId = req.params.id;
   const { title, description, status, priority, category_id, due_date } = req.body;
 
+  let dueDateIST = null;
+  if (due_date) {
+    dueDateIST = moment.tz(due_date, 'Asia/Kolkata').format('YYYY-MM-DD HH:mm:ss');
+  }
+
   try {
     console.log(`[PUT /todos/${todoId}] Updating todo for user ${userId}`);
     const results = await queryPromise(
       `UPDATE todos SET title=?, description=?, status=?, priority=?, category_id=?, due_date=? WHERE id=? AND user_id=?`,
-      [title, description, status, priority, category_id, due_date, todoId, userId]
+      [title, description, status, priority, category_id, dueDateIST, todoId, userId]
     );
 
     if (results.affectedRows === 0) {
