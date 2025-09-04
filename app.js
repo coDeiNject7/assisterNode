@@ -263,6 +263,45 @@ app.get('/todos', authMiddleware, async (req, res) => {
   }
 });
 
+// Search todos by title (partial match)
+app.get('/todos/search', authMiddleware, async (req, res) => {
+  const userId = req.user.id;
+  const { title } = req.query;
+
+  console.log(`[GET /todos/search] Authenticated user ID: ${userId}`);
+  console.log(`[GET /todos/search] Search title query param: ${title}`);
+
+  if (!title) {
+    console.log('[GET /todos/search] Missing title query parameter');
+    return res.status(400).json({ error: 'Query parameter "title" is required' });
+  }
+
+  try {
+    const likeQuery = `%${title}%`;
+    console.log(`[GET /todos/search] Searching todos for user ${userId} with title LIKE: ${likeQuery}`);
+
+    const todos = await queryPromise(
+      'SELECT * FROM todos WHERE user_id = ? AND title LIKE ?',
+      [userId, likeQuery]
+    );
+
+    console.log(`[GET /todos/search] Query returned ${todos.length} todos:`, todos);
+
+    // Convert due_date to IST string if present
+    const todosWithISTDates = todos.map(todo => {
+      if (todo.due_date) {
+        todo.due_date = moment.utc(todo.due_date).tz('Asia/Kolkata').format('YYYY-MM-DD HH:mm:ss');
+      }
+      return todo;
+    });
+
+    res.json(todosWithISTDates);
+  } catch (err) {
+    console.error('[GET /todos/search] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /todos/:id - convert single due_date to IST string
 app.get('/todos/:id', authMiddleware, async (req, res) => {
   const userId = req.user.id;
