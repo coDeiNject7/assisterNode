@@ -1,8 +1,10 @@
 const admin = require('firebase-admin');
-const serviceAccount = require('./assister-738e8-firebase-adminsdk-fbsvc-6a6487b222.json');
+
+// Parse FIREBASE_CONFIG from environment variable
+const firebaseConfig = JSON.parse(process.env.FIREBASE_CONFIG);
 
 admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+  credential: admin.credential.cert(firebaseConfig),
 });
 
 module.exports = admin;
