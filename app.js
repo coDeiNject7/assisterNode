@@ -33,23 +33,7 @@ app.post('/test-json', (req, res) => {
 // Utility function for queries
 const queryPromise = (sql, params = []) =>
   pool.query(sql, params).then(([rows]) => rows);
-function scheduleReminder(reminderDateUTC, fcmToken, message) {
-  schedule.scheduleJob(reminderDateUTC, async () => {
-    const payload = {
-      notification: {
-        title: 'Reminder',
-        body: message,
-      },
-      token: fcmToken,
-    };
-    try {
-      await admin.messaging().send(payload);
-      console.log('Push notification sent successfully');
-    } catch (error) {
-      console.error('Error sending push notification:', error);
-    }
-  });
-}
+
 // Table creation SQL (same as before)
 const createUsersTable = `
 CREATE TABLE IF NOT EXISTS users (
