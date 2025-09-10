@@ -6,12 +6,13 @@ const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const bodyParser = require('body-parser');
 const moment = require('moment-timezone');
-
 const pool = require('./db');
 const { generateToken } = require('./auth');
 const authMiddleware = require('./middleware/authMiddleware');
-
 const app = express();
+const schedule = require('node-schedule');
+const scheduledReminderJobs = new Map();
+const admin = require('./firebase');
 
 // ✅ Parse JSON
 app.use(express.json());
@@ -32,7 +33,23 @@ app.post('/test-json', (req, res) => {
 // Utility function for queries
 const queryPromise = (sql, params = []) =>
   pool.query(sql, params).then(([rows]) => rows);
-
+function scheduleReminder(reminderDateUTC, fcmToken, message) {
+  schedule.scheduleJob(reminderDateUTC, async () => {
+    const payload = {
+      notification: {
+        title: 'Reminder',
+        body: message,
+      },
+      token: fcmToken,
+    };
+    try {
+      await admin.messaging().send(payload);
+      console.log('Push notification sent successfully');
+    } catch (error) {
+      console.error('Error sending push notification:', error);
+    }
+  });
+}
 // Table creation SQL (same as before)
 const createUsersTable = `
 CREATE TABLE IF NOT EXISTS users (
@@ -84,11 +101,30 @@ CREATE TABLE IF NOT EXISTS songs (
   id INT AUTO_INCREMENT PRIMARY KEY,
   title VARCHAR(255),
   artist VARCHAR(255),
+  movie VARCHAR(255),
+  year VARCHAR(10),
+  genre VARCHAR(100),
+  composers VARCHAR(255),
+  audio_lang VARCHAR(50),
+  label VARCHAR(255),
   file_url TEXT,
   album_art_url TEXT,
-  audio_lang VARCHAR(10),
+  local_mp3 TEXT,
+  local_jpg TEXT,
+  youtube_url TEXT,
   lyrics JSON,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+`;
+
+const createUserFcmTokensTable = `
+CREATE TABLE IF NOT EXISTS user_fcm_tokens (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  fcm_token VARCHAR(512) NOT NULL UNIQUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 `;
 
@@ -99,6 +135,7 @@ CREATE TABLE IF NOT EXISTS songs (
     await queryPromise(createCategoriesTable);
     await queryPromise(createTodosTable);
     await queryPromise(createUserTokensTable);
+    await queryPromise(createUserFcmTokensTable);
     await queryPromise(createSongsTable);
     console.log('All tables ready');
   } catch (err) {
@@ -145,6 +182,62 @@ app.get('/public/songs/:id', async (req, res) => {
 });
 
 // ---------- Authentication Routes ----------
+
+async function getUserFcmTokens(userId) {
+  try {
+    const rows = await queryPromise('SELECT fcm_token FROM user_fcm_tokens WHERE user_id = ?', [userId]);
+    return rows.map(row => row.fcm_token);
+  } catch (err) {
+    console.error('Failed to fetch FCM tokens for user:', userId, err);
+    return [];
+  }
+}
+
+async function sendPushNotification(fcmTokens, title, body) {
+  if (!fcmTokens.length) {
+    console.log('No FCM tokens for user; skipping notification');
+    return;
+  }
+
+  const payload = {
+    notification: { title, body },
+    tokens: fcmTokens,
+  };
+
+  try {
+    const response = await admin.messaging().sendMulticast(payload);
+    console.log(`Sent ${response.successCount} push notifications; ${response.failureCount} failed`);
+  } catch (error) {
+    console.error('Error sending push notifications:', error);
+  }
+}
+
+function scheduleReminderNotification(todoId, reminderDateUTC, fcmTokens, title) {
+  if (scheduledReminderJobs.has(todoId)) {
+    scheduledReminderJobs.get(todoId).cancel();
+  }
+
+  if (reminderDateUTC <= new Date()) {
+    console.log(`Reminder time already passed for todo ${todoId}, skipping scheduling`);
+    return;
+  }
+
+  const job = schedule.scheduleJob(reminderDateUTC, async () => {
+    await sendPushNotification(fcmTokens, 'Todo Reminder', title);
+    scheduledReminderJobs.delete(todoId);
+  });
+
+  scheduledReminderJobs.set(todoId, job);
+  console.log(`Scheduled reminder for todo ${todoId} at ${reminderDateUTC}`);
+}
+
+function cancelReminderNotification(todoId) {
+  if (scheduledReminderJobs.has(todoId)) {
+    scheduledReminderJobs.get(todoId).cancel();
+    scheduledReminderJobs.delete(todoId);
+    console.log(`Cancelled reminder for todo ${todoId}`);
+  }
+}
 
 // Signup
 app.post(
@@ -199,11 +292,12 @@ app.post(
   '/signin',
   body('identifier').notEmpty().withMessage('Email or phone is required'),
   body('password').exists(),
+  body('fcmToken').optional().isString(),
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { identifier, password } = req.body;
+    const { identifier, password, fcmToken } = req.body;
 
     try {
       // Try finding by email OR phone
@@ -223,6 +317,15 @@ app.post(
         user.id,
         token,
       ]);
+
+      // Save or update the FCM token if provided
+      if (fcmToken) {
+        await queryPromise(
+          `INSERT INTO user_fcm_tokens (user_id, fcm_token) VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP`,
+          [user.id, fcmToken]
+        );
+      }
 
       // Return user without password + token
       const { password: _, ...userWithoutPassword } = user;
@@ -333,27 +436,32 @@ app.get('/todos/:id', authMiddleware, async (req, res) => {
 app.post('/todos', authMiddleware, body('title').notEmpty(), async (req, res) => {
   const userId = req.user.id;
   const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    console.log('[POST /todos] Validation errors:', errors.array());
-    return res.status(400).json({ errors: errors.array() });
-  }
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
   const { title, description, status, priority, category_id, due_date } = req.body;
-
-  // Convert due_date from IST to DB datetime format
   let dueDateIST = null;
-  if (due_date) {
-    dueDateIST = moment.tz(due_date, 'Asia/Kolkata').format('YYYY-MM-DD HH:mm:ss');
-  }
+  if (due_date) dueDateIST = moment.tz(due_date, 'Asia/Kolkata').format('YYYY-MM-DD HH:mm:ss');
 
   try {
-    console.log('[POST /todos] Creating todo for user:', userId);
     const result = await queryPromise(
-      'INSERT INTO todos (user_id, title, description, status, priority, category_id, due_date) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      `INSERT INTO todos (user_id, title, description, status, priority, category_id, due_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [userId, title, description || null, status || 'pending', priority || 'medium', category_id || null, dueDateIST]
     );
-    console.log('[POST /todos] Todo created with id:', result.insertId);
-    res.status(201).json({ id: result.insertId, message: 'Todo created' });
+
+    const todoId = result.insertId;
+    const fcmTokens = await getUserFcmTokens(userId);
+
+    // Send immediate notification
+    await sendPushNotification(fcmTokens, 'Todo Created', `Your todo "${title}" has been created.`);
+
+    // Schedule reminder if due date set
+    if (dueDateIST) {
+      const reminderDateUTC = moment.tz(dueDateIST, 'Asia/Kolkata').toDate();
+      scheduleReminderNotification(todoId, reminderDateUTC, fcmTokens, title);
+    }
+
+    res.status(201).json({ id: todoId, message: 'Todo created' });
   } catch (err) {
     console.error('[POST /todos] Error:', err.message);
     res.status(500).json({ error: err.message });
@@ -367,22 +475,31 @@ app.put('/todos/:id', authMiddleware, async (req, res) => {
   const { title, description, status, priority, category_id, due_date } = req.body;
 
   let dueDateIST = null;
-  if (due_date) {
-    dueDateIST = moment.tz(due_date, 'Asia/Kolkata').format('YYYY-MM-DD HH:mm:ss');
-  }
+  if (due_date) dueDateIST = moment.tz(due_date, 'Asia/Kolkata').format('YYYY-MM-DD HH:mm:ss');
 
   try {
-    console.log(`[PUT /todos/${todoId}] Updating todo for user ${userId}`);
     const results = await queryPromise(
-      `UPDATE todos SET title=?, description=?, status=?, priority=?, category_id=?, due_date=? WHERE id=? AND user_id=?`,
+      `UPDATE todos SET title=?, description=?, status=?, priority=?, category_id=?, due_date=?
+       WHERE id=? AND user_id=?`,
       [title, description, status, priority, category_id, dueDateIST, todoId, userId]
     );
 
-    if (results.affectedRows === 0) {
-      console.log(`[PUT /todos/${todoId}] Todo not found`);
-      return res.status(404).json({ error: 'Todo not found' });
+    if (results.affectedRows === 0) return res.status(404).json({ error: 'Todo not found' });
+
+    const fcmTokens = await getUserFcmTokens(userId);
+
+    // Immediate notification
+    await sendPushNotification(fcmTokens, 'Todo Updated', `Your todo "${title}" has been updated.`);
+
+    // Cancel existing reminder
+    cancelReminderNotification(todoId);
+
+    // Schedule new reminder if set
+    if (dueDateIST) {
+      const reminderDateUTC = moment.tz(dueDateIST, 'Asia/Kolkata').toDate();
+      scheduleReminderNotification(todoId, reminderDateUTC, fcmTokens, title);
     }
-    console.log(`[PUT /todos/${todoId}] Todo updated`);
+
     res.json({ message: 'Todo updated' });
   } catch (err) {
     console.error(`[PUT /todos/${todoId}] Error:`, err.message);
@@ -395,17 +512,11 @@ app.delete('/todos/:id', authMiddleware, async (req, res) => {
   const todoId = req.params.id;
 
   try {
-    console.log(`[DELETE /todos/${todoId}] Deleting todo for user ${userId}`);
-    const results = await queryPromise('DELETE FROM todos WHERE id = ? AND user_id = ?', [
-      todoId,
-      userId,
-    ]);
+    const results = await queryPromise('DELETE FROM todos WHERE id = ? AND user_id = ?', [todoId, userId]);
+    if (results.affectedRows === 0) return res.status(404).json({ error: 'Todo not found' });
 
-    if (results.affectedRows === 0) {
-      console.log(`[DELETE /todos/${todoId}] Todo not found`);
-      return res.status(404).json({ error: 'Todo not found' });
-    }
-    console.log(`[DELETE /todos/${todoId}] Todo deleted`);
+    cancelReminderNotification(todoId);
+
     res.json({ message: 'Todo deleted' });
   } catch (err) {
     console.error(`[DELETE /todos/${todoId}] Error:`, err.message);
@@ -504,6 +615,7 @@ app.delete('/categories/:id', authMiddleware, async (req, res) => {
 app.post('/logout', authMiddleware, async (req, res) => {
   try {
     await queryPromise('DELETE FROM user_tokens WHERE user_id = ? AND token = ?', [req.user.id, req.token]);
+    await queryPromise('DELETE FROM user_fcm_tokens WHERE user_id = ?', [req.user.id]);
     res.json({ message: 'Successfully logged out' });
   } catch (err) {
     res.status(500).json({ error: err.message });
