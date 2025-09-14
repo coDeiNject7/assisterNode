@@ -16,7 +16,6 @@ const admin = require('./firebase');
 
 // ✅ Parse JSON
 app.use(express.json());
-app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // Debugging content type
@@ -112,20 +111,33 @@ CREATE TABLE IF NOT EXISTS user_fcm_tokens (
 );
 `;
 
+app.get("/", (req, res) => {
+  res.send("🚀 Assister API is running!");
+});
+
+// Start server
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
+
+  runMigrations();
+});
+
 // Create tables
-(async () => {
+async function runMigrations() {
   try {
+    console.log("⚙️ Running database migrations...");
     await queryPromise(createUsersTable);
     await queryPromise(createCategoriesTable);
     await queryPromise(createTodosTable);
     await queryPromise(createUserTokensTable);
     await queryPromise(createUserFcmTokensTable);
     await queryPromise(createSongsTable);
-    console.log('All tables ready');
+    console.log("✅ All tables ready");
   } catch (err) {
-    console.error('Error creating tables:', err);
+    console.error("❌ Error creating tables:", err);
   }
-})();
+}
 
 // Public route: Get all songs metadata
 app.get('/public/songs', async (req, res) => {
@@ -604,16 +616,5 @@ app.post('/logout', authMiddleware, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
-
-// ✅ Add this:
-app.get("/", (req, res) => {
-  res.send("🚀 Assister API is running!");
-});
-
-// Start server
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
 });
 
