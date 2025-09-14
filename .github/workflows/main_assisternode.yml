@@ -1,7 +1,7 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 
-name: Build and deploy Node.js app to Azure Web App - assisterNode
+name: Build and deploy Node.js app to Azure Web App - assisternode
 
 on:
   push:
@@ -51,15 +51,15 @@ jobs:
       - name: Login to Azure
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_92CEF03C7C694D13B24BA4C00D92CE12 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_ACD72744DF024A1C900803DDAB424F54 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_214B879397BD4984B2441A53CBE6487B }}
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_3F9E4BF52E74477AAEC5046DA0C40507 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_1FC5E59B56144A20BC840312C940EFCA }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_DD091FF983394F099034B14FAD2126CD }}
 
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'assisterNode'
+          app-name: 'assisternode'
           slot-name: 'Production'
           package: .
           
